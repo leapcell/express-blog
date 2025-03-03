@@ -1,147 +1,100 @@
 const express = require('express');
-const leapcell = require('@leapcell/leapcell-js');
-const showdown   = require('showdown');
-
 const app = express();
-app.set('views', './templates');
+const path = require('path');
+// Import fs-extra module for file operations
+const fs = require('fs-extra');
+// Import markdown-it for Markdown to HTML conversion
+const md = require('markdown-it')();
+// Import front-matter for parsing metadata
+const fm = require('front-matter');
+// Import promisify to convert callback functions to promises
+const { promisify } = require('util');
+// Promisify fs.stat function
+const stat = promisify(fs.stat);
+
+// Set EJS as view engine
 app.set('view engine', 'ejs');
+// Set views directory
+app.set('views', path.join(__dirname, 'views'));
 
-const api = new leapcell.Leapcell({
-    apiKey: process.env.LEAPCELL_API_KEY,
-});
+// Serve static images
+app.use('/images', express.static(path.join(__dirname, 'images')));
 
-const resource = process.env.RESOURCE || "issac/flask-blog";
-const tableId = process.env.TABLE_ID || "tbl1738878922167070720";
-const author = process.env.AUTHOR || "Leapcell User";
-const avatar = process.env.AVATAR || "https://leapcell.io/logo.png";
+// Fetch blog posts
+async function getBlogPosts() {
+    // Define content directory path
+    const contentDir = path.join(__dirname, 'content');
+    // Read files in content directory
+    const files = await fs.readdir(contentDir);
+    const posts = [];
 
-const table = api.repo(resource).table(tableId);
+    for (const file of files) {
+        if (file.endsWith('.md')) {
+            // Get file path
+            const filePath = path.join(contentDir, file);
+            // Read file content
+            const fileContent = await fs.readFile(filePath, 'utf8');
+            // Parse front-matter
+            const { attributes, body } = fm(fileContent);
 
-
-app.get('/', async (request, response) => {
-    let res = [];
-    try {
-        res = await table.records.findMany();
-    } catch (error) {
-        console.log(error);
-        res = [];
-    }
-
-    const params = {
-        "author": author,
-        "avatar": avatar,
-        "posts": res.map((post) => {
-            return {
-                record_id: post.record_id,
-                title: post.fields["title"],
-                content: post.fields["content"],
-                cover: post.fields["cover"] ? post.fields["cover"][0] ? post.fields["cover"][0] : "" : "",
-                category: post.fields["category"] || [],
-                create_time: post.create_time,
-                summary: post.fields["content"] ? post.fields["content"].substring(0, 200) + "..." : "",
-
-            };
-        }),
-        category: null,
-        query: null,
-    }
-    return response.render('index', params);
-});
-
-app.get('/category/:category', async (request, response) => {
-    category = request.params.category;
-    let res = [];
-    try {
-        res = await table.records.findMany({
-            where: {
-                "category": {
-                    "contain": category
-                }
+            // Get summary
+            const maxContentLength = 200;
+            let summary = body;
+            if (body.length > maxContentLength) {
+                summary = summary.substring(0, maxContentLength) + '...';
             }
-        });
-    } catch (error) {
-        console.log(error);
-        res = [];
-    }
+            // Convert Markdown to HTML
+            const htmlContent = md.render(body);
+            // Get file stats
+            const stats = await stat(filePath);
+            // Get file creation date
+            const creationDate = new Date(stats.ctime);
+            // Get slug from file name
+            const slug = file.replace('.md', '').replace(/ /g, '-');
 
-    const params = {
-        "author": author,
-        "avatar": avatar,
-        "posts": res.map((post) => {
-            return {
-                record_id: post.record_id,
-                title: post.fields["title"],
-                content: post.fields["content"],
-                cover: post.fields["cover"] ? post.fields["cover"][0] ? post.fields["cover"][0] : "" : "",
-                category: post.fields["category"] || [],
-                create_time: post.create_time,
-                summary: post.fields["content"] ? post.fields["content"].substring(0, 200) + "..." : "",
-
+            // Create post object
+            const post = {
+                title: attributes.title || file.replace('.md', ''),
+                summary: attributes.summary || summary, // Use summary if available
+                content: htmlContent,
+                dateString: creationDate.toISOString(), // Convert date to string
+                date: creationDate,
+                tags: attributes.tags || [],
+                slug: slug,
             };
-        }),
-        category: category,
-        query: null,
-    }
-    return response.render('index', params);
-});
-
-app.get('/search', async (request, response) => {
-    query = request.query.query;
-    let res = [];
-    try {
-        res = await table.records.search({
-            query: query,
-            search_fields: ["title", "content"],
-        });
-    } catch (error) {
-        console.log(error);
-        res = [];
+            posts.push(post);
+        }
     }
 
-    const params = {
-        "author": author,
-        "avatar": avatar,
-        "posts": res.map((post) => {
-            return {
-                record_id: post.record_id,
-                title: post.fields["title"],
-                content: post.fields["content"],
-                cover: post.fields["cover"] ? post.fields["cover"][0] ? post.fields["cover"][0] : "" : "",
-                category: post.fields["category"] || [],
-                create_time: post.create_time,
-                summary: post.fields["content"] ? post.fields["content"].substring(0, 200) + "..." : "",
+    // Sort posts by creation date in descending order
+    posts.sort((a, b) => b.date - a.date);
+    return posts;
+}
 
-            };
-        }),
-        category: null,
-        query: query,
+// Home page route
+app.get('/', async (req, res) => {
+    const posts = await getBlogPosts();
+    res.render('index', { posts });
+});
+
+// Single post route
+app.get('/blog/:postTitle', async (req, res) => {
+    // Replace hyphens with spaces in post title
+    const postTitle = req.params.postTitle;
+    const posts = await getBlogPosts();
+    // Find post by title
+    const post = posts.find(p => 
+        p.slug === postTitle);
+
+    if (post) {
+        res.render('single', { post });
+    } else {
+        res.status(404).send('Post not found');
     }
-    return response.render('index', params);
 });
 
-app.get("/post/:post_id", async (request, response) => {
-    const post_id = request.params.post_id;
-    const res = await table.records.findById(post_id);
-    converter = new showdown.Converter();
-    const post = {
-        record_id: res.record_id,
-        title: res.fields["title"],
-        category: res.fields["category"] || [],
-        create_time: res.create_time,
-    };
-    return response.render('post', {
-        "author": author,
-        "avatar": avatar,
-        "post": post,
-        "markdown_html": converter.makeHtml(res.fields["content"] || ""),
-        "category": res.fields["category"] || [],
-    });
-});
-
-app.get("/hello", (request, response) => {
-    return response.send("Hello World");
-});
-
-app.listen(8080, () => {
-    console.log('App is listening on port 8080');
+// Start the server
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
 });
