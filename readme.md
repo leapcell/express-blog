@@ -29,13 +29,13 @@ Before running the project locally, make sure you have installed Node.js and npm
 1. **Clone the Project**: Clone the project repository to your local machine.
 
 ```bash
-git clone [Project Repository URL]
+git clone https://github.com/leapcell/express-blog
 ```
 
 2. **Install Dependencies**: Navigate to the project directory and install the required dependencies.
 
 ```bash
-cd [Project Directory]
+cd express-blog
 npm install
 ```
 
