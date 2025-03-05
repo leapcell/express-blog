@@ -48,7 +48,10 @@ async function getBlogPosts() {
             // Get file stats
             const stats = await stat(filePath);
             // Get file creation date
-            const creationDate = new Date(stats.ctime);
+            let creationDate = new Date(stats.ctime);
+            if (attributes.date) {
+                creationDate = new Date(attributes.date);
+            }
             // Get slug from file name
             const slug = file.replace('.md', '').replace(/ /g, '-');
 
